@@ -43,6 +43,8 @@ class RequestContext:
     end: date | None = None
     page: int = 1
     page_size: int = 100
+    # 关注的 ASIN。接口支持按 ASIN 筛选时在 build 里带上，可以大幅减少翻页
+    asins: list[str] = field(default_factory=list)
     extra: dict[str, Any] = field(default_factory=dict)
 
 
@@ -101,7 +103,8 @@ def num(v: Any, default: float = 0.0) -> float:
 #     name=PRODUCTS,
 #     method="POST",
 #     path="/api/xxx/product/list",
-#     build=lambda ctx: ({}, {"shopIds": [ctx.shop_id], "pageNo": ctx.page, "pageSize": ctx.page_size}),
+#     # 接口支持按 ASIN 筛选时带上 ctx.asins（关注的产品），可以少翻很多页
+#     build=lambda ctx: ({}, {"shopIds": [ctx.shop_id], "asinList": ctx.asins, "pageNo": ctx.page, "pageSize": ctx.page_size}),
 #     items=lambda p: dig(p, "data.rows", []),
 #     total=lambda p: dig(p, "data.total", 0),
 #     parse=lambda r, ctx: Product(shop_id=ctx.shop_id, asin=r["asin"], sku=r.get("sku", ""), ...),

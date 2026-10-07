@@ -13,6 +13,7 @@ from axis.agents.schemas import REVIEW_OUTPUT
 from axis.agents.tools import build_tools
 from axis.config import Settings
 from axis.db.schema import ReportRow
+from axis.watchlist import load_scope
 from axis.metrics.facts import daily_facts
 
 log = logging.getLogger(__name__)
@@ -34,9 +35,8 @@ def run_daily_review(
     sf: sessionmaker[Session], settings: Settings, report_date: date, llm: LLM | None
 ) -> ReportRow:
     with sf() as s:
-        facts, flags = daily_facts(s, report_date, settings.thresholds)
-    if not facts["shops"]:
-        raise RuntimeError("数据库里没有店铺数据，请先运行 axis sync")
+        scope = load_scope(s)
+        facts, flags = daily_facts(s, report_date, settings.thresholds, scope)
 
     title = f"每日复盘 {report_date.isoformat()}"
     if llm is None:
@@ -52,7 +52,7 @@ def run_daily_review(
                 facts=json.dumps(facts, ensure_ascii=False, default=str),
             ),
             output_schema=REVIEW_OUTPUT,
-            tools=build_tools(sf, report_date, settings.thresholds),
+            tools=build_tools(sf, report_date, settings.thresholds, scope),
         )
         log.info("复盘完成：%s 轮，用量 %s", result.turns, result.usage)
         output, model = result.output, result.model

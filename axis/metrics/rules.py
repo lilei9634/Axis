@@ -13,6 +13,7 @@ from axis.config import Thresholds
 from axis.metrics import queries as q
 from axis.metrics.compute import pct_change, safe_div
 from axis.models import AdLevel
+from axis.watchlist import Scope
 
 SEVERITY_ORDER = {"critical": 0, "warning": 1, "opportunity": 2}
 
@@ -47,22 +48,27 @@ class Flag:
         return asdict(self)
 
 
-def evaluate(s: Session, report_date: date, th: Thresholds, shop_ids: list[str] | None = None) -> list[Flag]:
+def evaluate(
+    s: Session, report_date: date, th: Thresholds, scope: Scope, shop_ids: list[str] | None = None
+) -> list[Flag]:
+    """只检查关注范围内的产品和广告活动。"""
     flags: list[Flag] = []
-    shops = shop_ids or sorted({p.shop_id for p in q.products(s)})
-    for shop_id in shops:
-        flags += _ad_rules(s, shop_id, report_date, th)
-        flags += _product_rules(s, shop_id, report_date, th)
+    for shop_id in scope.shop_ids:
+        if shop_ids and shop_id not in shop_ids:
+            continue
+        flags += _ad_rules(s, shop_id, report_date, th, scope)
+        flags += _product_rules(s, shop_id, report_date, th, scope)
     flags.sort(key=lambda f: (SEVERITY_ORDER[f.severity], -f.metrics.get("spend", 0)))
     return flags
 
 
-def _ad_rules(s: Session, shop_id: str, end: date, th: Thresholds) -> list[Flag]:
+def _ad_rules(s: Session, shop_id: str, end: date, th: Thresholds, scope: Scope) -> list[Flag]:
     out = []
     start, _ = q.window(end, th.lookback_days)
+    in_scope = dict(scope_asins=scope.asins[shop_id], scope_campaigns=scope.campaigns.get(shop_id, []))
 
     # 1. 只花钱不出单的搜索词 → 否定
-    for r in q.ad_entity_stats(s, shop_id, start, end, AdLevel.SEARCH_TERM, limit=None):
+    for r in q.ad_entity_stats(s, shop_id, start, end, AdLevel.SEARCH_TERM, limit=None, **in_scope):
         if r["orders"] == 0 and (r["clicks"] >= th.min_clicks_no_order or r["spend"] >= th.min_spend_no_order):
             out.append(Flag(
                 severity="warning", code="wasted_search_term", shop_id=shop_id, asin=r["asin"],
@@ -86,7 +92,7 @@ def _ad_rules(s: Session, shop_id: str, end: date, th: Thresholds) -> list[Flag]
             ))
 
     # 3. ACOS 过高的投放词 → 降价
-    for r in q.ad_entity_stats(s, shop_id, start, end, AdLevel.KEYWORD, limit=None):
+    for r in q.ad_entity_stats(s, shop_id, start, end, AdLevel.KEYWORD, limit=None, **in_scope):
         if r["orders"] > 0 and r["clicks"] >= th.min_clicks_no_order and r["acos"] and r["acos"] > th.target_acos * 1.5:
             # 让 ACOS 回到目标附近所需的 CPC
             target_cpc = (r["cpc"] or 0) * th.target_acos / r["acos"]
@@ -102,7 +108,7 @@ def _ad_rules(s: Session, shop_id: str, end: date, th: Thresholds) -> list[Flag]
     # 4. 预算受限但 ACOS 健康的广告活动 → 加预算
     s7, _ = q.window(end, 7)
     for c in q.campaigns(s, shop_id):
-        if not c.daily_budget or c.state != "enabled":
+        if c.campaign_id not in in_scope["scope_campaigns"] or not c.daily_budget or c.state != "enabled":
             continue
         tot = q.ad_totals(s, s7, end, AdLevel.CAMPAIGN, shop_id=shop_id, campaign_id=c.campaign_id)
         avg_spend = tot.spend / 7
@@ -118,12 +124,14 @@ def _ad_rules(s: Session, shop_id: str, end: date, th: Thresholds) -> list[Flag]
     return out
 
 
-def _product_rules(s: Session, shop_id: str, end: date, th: Thresholds) -> list[Flag]:
+def _product_rules(s: Session, shop_id: str, end: date, th: Thresholds, scope: Scope) -> list[Flag]:
     out = []
     cur_s, cur_e = q.window(end, 7)
     prev_s, prev_e = q.window(end, 7, offset_days=7)
     s14, _ = q.window(end, 14)
     for p in q.products(s, shop_id):
+        if not scope.has(shop_id, p.asin):
+            continue
         cur = q.period_summary(s, cur_s, cur_e, shop_id, p.asin)
         prev = q.period_summary(s, prev_s, prev_e, shop_id, p.asin)
         base = dict(shop_id=shop_id, asin=p.asin, target=p.title)

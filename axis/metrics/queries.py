@@ -2,7 +2,7 @@
 
 from datetime import date, timedelta
 
-from sqlalchemy import func, select
+from sqlalchemy import and_, func, or_, select
 from sqlalchemy.orm import Session
 
 from axis.db.schema import AdCampaignRow, AdMetricDailyRow, ProductRow, SalesDailyRow
@@ -16,7 +16,14 @@ def window(end: date, days: int, offset_days: int = 0) -> tuple[date, date]:
     return e - timedelta(days=days - 1), e
 
 
-def sales_totals(s: Session, start: date, end: date, shop_id: str | None = None, asin: str | None = None) -> SalesTotals:
+def sales_totals(
+    s: Session,
+    start: date,
+    end: date,
+    shop_id: str | None = None,
+    asin: str | None = None,
+    asins: list[str] | None = None,
+) -> SalesTotals:
     t = SalesDailyRow
     q = select(
         func.coalesce(func.sum(t.units), 0),
@@ -29,6 +36,8 @@ def sales_totals(s: Session, start: date, end: date, shop_id: str | None = None,
         q = q.where(t.shop_id == shop_id)
     if asin:
         q = q.where(t.asin == asin)
+    if asins is not None:
+        q = q.where(t.asin.in_(asins))
     units, orders, revenue, sessions, refunds = s.execute(q).one()
     return SalesTotals(units=units, orders=orders, revenue=float(revenue), sessions=sessions, refunds=refunds)
 
@@ -41,6 +50,7 @@ def ad_totals(
     shop_id: str | None = None,
     asin: str | None = None,
     campaign_id: str | None = None,
+    asins: list[str] | None = None,
 ) -> AdTotals:
     t = AdMetricDailyRow
     q = select(*_metric_sums(t)).where(t.date.between(start, end), t.level == level.value)
@@ -50,16 +60,28 @@ def ad_totals(
         q = q.where(t.asin == asin)
     if campaign_id:
         q = q.where(t.campaign_id == campaign_id)
+    if asins is not None:
+        q = q.where(t.asin.in_(asins))
     imp, clk, spend, orders, sales = s.execute(q).one()
     return AdTotals(impressions=imp, clicks=clk, spend=float(spend), orders=orders, sales=float(sales))
 
 
-def period_summary(s: Session, start: date, end: date, shop_id: str | None = None, asin: str | None = None) -> PeriodSummary:
-    # 产品维度的广告数据取"广告产品"粒度，店铺维度取"广告活动"粒度
-    level = AdLevel.PRODUCT_AD if asin else AdLevel.CAMPAIGN
+def period_summary(
+    s: Session,
+    start: date,
+    end: date,
+    shop_id: str | None = None,
+    asin: str | None = None,
+    asins: list[str] | None = None,
+) -> PeriodSummary:
+    """单个产品（asin）或一组产品（asins）的销售 + 广告汇总。
+
+    广告数据取"广告产品"粒度并按 ASIN 过滤，这样店铺汇总只包含关注的产品，
+    不会混进同一广告活动里其他产品的花费。
+    """
     return PeriodSummary(
-        sales=sales_totals(s, start, end, shop_id, asin),
-        ads=ad_totals(s, start, end, level, shop_id, asin),
+        sales=sales_totals(s, start, end, shop_id, asin, asins),
+        ads=ad_totals(s, start, end, AdLevel.PRODUCT_AD, shop_id, asin, asins=asins),
     )
 
 
@@ -73,6 +95,8 @@ def ad_entity_stats(
     campaign_id: str | None = None,
     order_by: str = "spend",
     limit: int | None = 50,
+    scope_asins: list[str] | None = None,
+    scope_campaigns: list[str] | None = None,
 ) -> list[dict]:
     """按实体（广告活动 / 投放词 / 搜索词）汇总一段时间的广告表现。"""
     t = AdMetricDailyRow
@@ -85,6 +109,12 @@ def ad_entity_stats(
         q = q.where(t.asin == asin)
     if campaign_id:
         q = q.where(t.campaign_id == campaign_id)
+    if scope_asins is not None:
+        # 只看关注范围：有 ASIN 的行按 ASIN，没有 ASIN 的行按所属广告活动
+        q = q.where(or_(
+            t.asin.in_(scope_asins),
+            and_(t.asin == "", t.campaign_id.in_(scope_campaigns or [])),
+        ))
     names = campaign_names(s, shop_id)
     out = []
     for cid, key, text, match, row_asin, imp, clk, spend, orders, sales in s.execute(q):

@@ -14,8 +14,10 @@ from axis.config import get_settings
 app = typer.Typer(help="Axis：基于赛狐 ERP 的亚马逊运营助手（MVP：只读诊断 + 每日复盘）", no_args_is_help=True)
 har_app = typer.Typer(help="赛狐抓包（HAR）工具", no_args_is_help=True)
 recs_app = typer.Typer(help="查看和审批调整建议", no_args_is_help=True)
+track_app = typer.Typer(help="关注列表：只有列表里的产品会被同步和分析", no_args_is_help=True)
 app.add_typer(har_app, name="har")
 app.add_typer(recs_app, name="recs")
+app.add_typer(track_app, name="track")
 
 AdapterOpt = typer.Option("sellfox", "--adapter", "-a", help="数据源：sellfox / fake")
 LlmOpt = typer.Option(True, "--llm/--no-llm", help="是否调用 Claude 分析；--no-llm 只用规则引擎出报告")
@@ -95,6 +97,68 @@ def daemon(adapter: str = AdapterOpt, llm: bool = LlmOpt, notify: bool = NotifyO
     from axis.scheduler import start
 
     start(get_settings(), adapter, llm, notify)
+
+
+@app.command()
+def shops(adapter: str = AdapterOpt):
+    """列出 ERP 里的店铺，用来查店铺 ID。"""
+    from axis.erp.base import get_adapter
+
+    for sh in get_adapter(adapter).list_shops():
+        typer.echo(f"{sh.shop_id:20} {sh.marketplace:4} {sh.name}")
+
+
+def _session():
+    from axis.db.session import make_session_factory
+
+    return make_session_factory(get_settings().db_url)()
+
+
+@track_app.command("add")
+def track_add(
+    asins: list[str] = typer.Argument(..., help="一个或多个 ASIN"),
+    shop: str = typer.Option("", "--shop", "-s", help="店铺 ID（axis shops 查看）；不填表示所有店铺里的这个 ASIN"),
+    note: str = typer.Option("", help="备注"),
+):
+    """关注产品。添加后运行 axis sync 拉取数据。"""
+    from axis import watchlist
+
+    with _session() as s:
+        n = watchlist.add(s, asins, shop, note)
+    where = f"店铺 {shop}" if shop else "所有店铺"
+    typer.echo(f"已关注 {n} 个产品（{where}）。运行 `axis sync` 拉取数据")
+
+
+@track_app.command("remove")
+def track_remove(
+    asins: list[str] = typer.Argument(...),
+    shop: str = typer.Option(None, "--shop", "-s", help="只取消某个店铺的关注；不填则取消这个 ASIN 的所有关注"),
+):
+    """取消关注。历史数据保留在数据库里，但不再出现在报告中。"""
+    from axis import watchlist
+
+    with _session() as s:
+        n = watchlist.remove(s, asins, shop)
+    typer.echo(f"已取消 {n} 条关注")
+
+
+@track_app.command("list")
+def track_list():
+    """查看关注列表，以及每个产品是否已经同步到数据。"""
+    from axis.db.schema import ProductRow, TrackedProductRow
+
+    with _session() as s:
+        rows = list(s.scalars(select(TrackedProductRow).order_by(TrackedProductRow.asin, TrackedProductRow.shop_id)))
+        if not rows:
+            typer.echo("关注列表为空。用 `axis track add <ASIN> [--shop 店铺ID]` 添加")
+            return
+        for r in rows:
+            q = select(ProductRow).where(ProductRow.asin == r.asin)
+            if r.shop_id:
+                q = q.where(ProductRow.shop_id == r.shop_id)
+            synced = list(s.scalars(q))
+            status = "、".join(f"{p.shop_id}「{p.title[:30]}」" for p in synced) if synced else "未同步"
+            typer.echo(f"{r.asin:12} {r.shop_id or '所有店铺':10} {status}" + (f"｜{r.note}" if r.note else ""))
 
 
 @har_app.command("sanitize")

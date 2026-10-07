@@ -5,6 +5,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from axis import watchlist
 from axis.config import Settings
 from axis.db.session import make_session_factory
 from axis.erp.fake import FakeAdapter
@@ -25,9 +26,17 @@ def settings(tmp_path) -> Settings:
     )
 
 
+# 关注范围：Homely 三个产品在所有店铺（S1-S3），KitchenPro 只关注 S4 的 C 产品。S5 和 K 品牌的 A/B 不关注
+TRACKED_ALL_SHOPS = ["B0HATEST01", "B0HBTEST01", "B0HCTEST01"]
+TRACKED_S4 = ["B0KCTEST01"]
+
+
 @pytest.fixture
 def sf(settings):
     factory = make_session_factory(settings.db_url)
+    with factory() as s:
+        watchlist.add(s, TRACKED_ALL_SHOPS)
+        watchlist.add(s, TRACKED_S4, shop_id="S4")
     sync(FakeAdapter(anchor=ANCHOR), factory, ANCHOR, 30)
     return factory
 
@@ -71,11 +80,11 @@ def final_response(output: dict):
 SAMPLE_OUTPUT = {
     "summary": "S1 的 C 产品销量腰斩，需要优先排查。",
     "findings": [
-        {"severity": "critical", "title": "销量骤降", "detail": "近 7 天销量下降 55%", "shop_id": "S1", "asin": "B0S1CTEST0"}
+        {"severity": "critical", "title": "销量骤降", "detail": "近 7 天销量下降 55%", "shop_id": "S1", "asin": "B0HCTEST01"}
     ],
     "recommendations": [
         {
-            "action_type": "negate_search_term", "shop_id": "S1", "asin": "B0S1ATEST0", "campaign_id": "S1-A-AUTO",
+            "action_type": "negate_search_term", "shop_id": "S1", "asin": "B0HATEST01", "campaign_id": "S1-A-AUTO",
             "target": "rubber scraper", "current_value": "", "proposed_value": "否定精准",
             "reason": "14 天 0 出单", "expected_impact": "每周节省约 30 美元", "confidence": "high", "risk": "low",
         }

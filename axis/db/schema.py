@@ -37,6 +37,18 @@ class ShopRow(Base):
     updated_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
 
 
+class TrackedProductRow(Base):
+    """关注列表：只有列表里的产品会被同步和分析。shop_id 为空表示所有店铺里的这个 ASIN。"""
+
+    __tablename__ = "tracked_products"
+    __table_args__ = (UniqueConstraint("shop_id", "asin"),)
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    shop_id: Mapped[str] = mapped_column(String(64), default="")
+    asin: Mapped[str] = mapped_column(String(20))
+    note: Mapped[str] = mapped_column(Text, default="")
+    created_at: Mapped[datetime] = mapped_column(DateTime(timezone=True), default=utcnow)
+
+
 class ProductRow(Base):
     __tablename__ = "products"
     __table_args__ = (UniqueConstraint("shop_id", "asin"),)

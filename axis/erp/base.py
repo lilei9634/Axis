@@ -11,18 +11,23 @@ RawSink = Callable[[str, str, dict[str, Any], Any], None]
 
 
 class ErpAdapter(Protocol):
+    """asins 参数是关注的 ASIN：数据源支持按 ASIN 过滤时用它减少请求量；
+    不支持也没关系，同步模块还会再过滤一遍。"""
+
     name: str
 
     def list_shops(self) -> list[Shop]: ...
 
-    def list_products(self, shop_id: str) -> list[Product]: ...
+    def list_products(self, shop_id: str, asins: list[str] | None = None) -> list[Product]: ...
 
-    def get_sales_daily(self, shop_id: str, start: date, end: date) -> list[SalesDaily]: ...
+    def get_sales_daily(
+        self, shop_id: str, start: date, end: date, asins: list[str] | None = None
+    ) -> list[SalesDaily]: ...
 
     def list_ad_campaigns(self, shop_id: str) -> list[AdCampaign]: ...
 
     def get_ad_metrics(
-        self, shop_id: str, level: AdLevel, start: date, end: date
+        self, shop_id: str, level: AdLevel, start: date, end: date, asins: list[str] | None = None
     ) -> list[AdMetricRow]: ...
 
 

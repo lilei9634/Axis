@@ -1,6 +1,7 @@
 """假数据适配器：生成 5 家店铺的产品、销量和广告数据，用于开发、测试和演示。
 
 数据是确定性的（固定随机种子），并且故意埋了几类问题，方便验证规则和复盘：
+- ASIN：Homely（S1-S3）卖 B0HATEST01 / B0HBTEST01 / B0HCTEST01，KitchenPro（S4-S5）卖 B0KATEST01 / B0KBTEST01 / B0KCTEST01
 - 高 ACOS 的关键词、点击很多却不出单的搜索词、值得收割的高转化搜索词
 - 预算受限的广告活动、销量骤降的产品、库存不足的产品
 """
@@ -35,8 +36,12 @@ _SEARCH_TERMS = [
 ]
 
 
+# 同一品牌在不同站点的店铺卖的是同一个 ASIN（和真实情况一样）
+_BRAND = {"S1": "H", "S2": "H", "S3": "H", "S4": "K", "S5": "K"}
+
+
 def _asin(shop_id: str, suffix: str) -> str:
-    return f"B0{shop_id}{suffix}TEST01"[:10]
+    return f"B0{_BRAND[shop_id]}{suffix}TEST01"
 
 
 class FakeAdapter:
@@ -60,7 +65,7 @@ class FakeAdapter:
     def list_shops(self) -> list[Shop]:
         return [Shop(shop_id=s, name=n, marketplace=m, currency=c) for s, n, m, c in _SHOPS]
 
-    def list_products(self, shop_id: str) -> list[Product]:
+    def list_products(self, shop_id: str, asins: list[str] | None = None) -> list[Product]:
         out = []
         for suffix, title, price, _, stock in _PRODUCTS:
             out.append(
@@ -93,7 +98,7 @@ class FakeAdapter:
             units *= 0.45
         return max(0, round(units))
 
-    def get_sales_daily(self, shop_id: str, start: date, end: date) -> list[SalesDaily]:
+    def get_sales_daily(self, shop_id: str, start: date, end: date, asins: list[str] | None = None) -> list[SalesDaily]:
         out = []
         for suffix, _, price, base, _ in _PRODUCTS:
             for d in self._days(start, end):
@@ -124,7 +129,7 @@ class FakeAdapter:
                     name=f"{title} - Auto",
                     targeting_type="auto",
                     # 产品 A 的自动广告预算偏低，每天都会花完
-                    daily_budget=20.0 if suffix == "A" else 40.0,
+                    daily_budget=17.0 if suffix == "A" else 40.0,
                 )
             )
             out.append(
@@ -138,7 +143,9 @@ class FakeAdapter:
             )
         return out
 
-    def get_ad_metrics(self, shop_id: str, level: AdLevel, start: date, end: date) -> list[AdMetricRow]:
+    def get_ad_metrics(
+        self, shop_id: str, level: AdLevel, start: date, end: date, asins: list[str] | None = None
+    ) -> list[AdMetricRow]:
         # 先在搜索词粒度生成数据，其余粒度由它汇总，保证各粒度之间数字一致
         st_rows = self._search_term_rows(shop_id, start, end)
         if level == AdLevel.SEARCH_TERM:
@@ -195,6 +202,8 @@ class FakeAdapter:
                         elif i == 1 and camp == "EXACT":  # 竞争激烈，出价过高，ACOS 偏高
                             cpc *= 2.6
                             cvr = 0.08
+                        elif suffix == "A" and camp == "AUTO":  # 产品 A 的自动广告效率好，但预算偏低
+                            cvr = 0.22
                         orders = sum(1 for _ in range(clicks) if rng.random() < cvr)
                         out.append(
                             AdMetricRow(

@@ -9,37 +9,55 @@ from axis.agents.llm import Tool
 from axis.metrics import queries as q
 from axis.metrics.facts import product_facts
 from axis.models import AdLevel
+from axis.watchlist import Scope
 
 
 def _schema(props: dict) -> dict:
     return {"type": "object", "properties": props, "required": list(props), "additionalProperties": False}
 
 
-def build_tools(sf: sessionmaker[Session], report_date: date, th: Thresholds) -> list[Tool]:
+def build_tools(sf: sessionmaker[Session], report_date: date, th: Thresholds, scope: Scope) -> list[Tool]:
+    """所有工具都只能查到关注范围内的产品和广告活动。"""
+
+    def check(shop_id: str, asin: str = ""):
+        if shop_id not in scope.asins:
+            raise ValueError(f"店铺 {shop_id} 没有关注的产品；可用店铺：{', '.join(scope.shop_ids)}")
+        if asin and not scope.has(shop_id, asin):
+            raise ValueError(f"{asin} 不在关注列表里；店铺 {shop_id} 关注的产品：{', '.join(scope.asins[shop_id])}")
+
     def product_detail(inp: dict):
+        check(inp["shop_id"], inp["asin"])
         with sf() as s:
-            return product_facts(s, inp["shop_id"], inp["asin"], report_date, th)
+            return product_facts(s, inp["shop_id"], inp["asin"], report_date, th, scope)
 
     def ad_breakdown(inp: dict):
+        shop_id, asin = inp["shop_id"], inp["asin"]
+        check(shop_id, asin)
         days = max(1, min(int(inp["days"]), 60))
         with sf() as s:
             start, end = q.window(report_date, days)
             return q.ad_entity_stats(
-                s, inp["shop_id"], start, end, AdLevel(inp["level"]),
-                asin=inp["asin"] or None, campaign_id=inp["campaign_id"] or None,
+                s, shop_id, start, end, AdLevel(inp["level"]),
+                campaign_id=inp["campaign_id"] or None,
                 order_by=inp["order_by"], limit=max(1, min(int(inp["limit"]), 100)),
+                scope_asins=[asin] if asin else scope.asins[shop_id],
+                scope_campaigns=scope.campaigns.get(shop_id, []),
             )
 
     def product_daily(inp: dict):
+        check(inp["shop_id"], inp["asin"])
         days = max(1, min(int(inp["days"]), 60))
         with sf() as s:
             return q.daily_series(s, inp["shop_id"], inp["asin"], *q.window(report_date, days))
 
     def list_campaigns(inp: dict):
+        check(inp["shop_id"])
         with sf() as s:
             start, end = q.window(report_date, 14)
             out = []
             for c in q.campaigns(s, inp["shop_id"]):
+                if c.campaign_id not in scope.campaigns.get(c.shop_id, []):
+                    continue
                 tot = q.ad_totals(s, start, end, AdLevel.CAMPAIGN, shop_id=c.shop_id, campaign_id=c.campaign_id)
                 out.append({"campaign_id": c.campaign_id, "name": c.name, "ad_type": c.ad_type, "state": c.state,
                             "targeting_type": c.targeting_type, "daily_budget": c.daily_budget,
@@ -76,7 +94,7 @@ def build_tools(sf: sessionmaker[Session], report_date: date, th: Thresholds) ->
         ),
         Tool(
             "list_campaigns",
-            "列出某店铺的全部广告活动，包含预算、状态和近 14 天表现。",
+            "列出某店铺里推广关注产品的广告活动，包含预算、状态和近 14 天表现。",
             _schema({"shop_id": str_}),
             list_campaigns,
         ),

@@ -87,8 +87,8 @@ def test_offline_review_and_diagnosis(sf, settings):
     report = run_daily_review(sf, settings, ANCHOR, None)
     assert report.model == "rules"
     assert report.content["recommendations"]
-    diag = run_diagnosis(sf, settings, "S1", "B0S1CTEST0", ANCHOR, None)
-    assert diag.asin == "B0S1CTEST0"
+    diag = run_diagnosis(sf, settings, "S1", "B0HCTEST01", ANCHOR, None)
+    assert diag.asin == "B0HCTEST01"
     assert any(f["title"] == "销量骤降" for f in diag.content["findings"])
 
 
@@ -98,3 +98,21 @@ def test_rules_output_matches_schema(sf, settings):
     assert set(report.content) == set(REVIEW_OUTPUT["required"])
     rec_keys = set(REVIEW_OUTPUT["properties"]["recommendations"]["items"]["required"])
     assert all(set(r) == rec_keys for r in report.content["recommendations"])
+
+
+def test_tools_refuse_untracked_products(sf, settings):
+    from axis.agents.tools import build_tools
+    from axis.watchlist import load_scope
+
+    with sf() as s:
+        scope = load_scope(s)
+    tools = {t.name: t for t in build_tools(sf, ANCHOR, settings.thresholds, scope)}
+    with pytest.raises(ValueError, match="不在关注列表"):
+        tools["get_product_detail"].fn({"shop_id": "S4", "asin": "B0KATEST01"})
+    with pytest.raises(ValueError, match="没有关注的产品"):
+        tools["list_campaigns"].fn({"shop_id": "S5"})
+    camps = tools["list_campaigns"].fn({"shop_id": "S4"})
+    assert {c["campaign_id"] for c in camps} == {"S4-C-AUTO", "S4-C-EXACT"}
+    rows = tools["get_ad_breakdown"].fn({"shop_id": "S4", "level": "search_term", "days": 14, "asin": "",
+                                         "campaign_id": "", "order_by": "spend", "limit": 100})
+    assert rows and all(r["asin"] == "B0KCTEST01" for r in rows)

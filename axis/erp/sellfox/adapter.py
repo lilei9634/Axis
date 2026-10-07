@@ -35,30 +35,36 @@ class SellfoxAdapter:
         )
         return cls(client, page_size=st.sellfox_page_size)
 
-    def _ctx(self, shop_id: str = "", start: date | None = None, end: date | None = None) -> E.RequestContext:
-        return E.RequestContext(shop_id=shop_id, start=start, end=end, page_size=self.page_size)
+    def _ctx(
+        self, shop_id: str = "", start: date | None = None, end: date | None = None, asins: list[str] | None = None
+    ) -> E.RequestContext:
+        return E.RequestContext(shop_id=shop_id, start=start, end=end, page_size=self.page_size, asins=asins or [])
 
     def list_shops(self) -> list[Shop]:
         return self.client.fetch_all(E.SHOPS, self._ctx())
 
-    def list_products(self, shop_id: str) -> list[Product]:
-        return self.client.fetch_all(E.PRODUCTS, self._ctx(shop_id))
+    def list_products(self, shop_id: str, asins: list[str] | None = None) -> list[Product]:
+        return self.client.fetch_all(E.PRODUCTS, self._ctx(shop_id, asins=asins))
 
-    def _fetch_range(self, name: str, shop_id: str, start: date, end: date) -> list:
+    def _fetch_range(self, name: str, shop_id: str, start: date, end: date, asins: list[str] | None) -> list:
         if not self.client.endpoint(name).per_day:
-            return self.client.fetch_all(name, self._ctx(shop_id, start, end))
+            return self.client.fetch_all(name, self._ctx(shop_id, start, end, asins))
         out = []
         d = start
         while d <= end:
-            out += self.client.fetch_all(name, self._ctx(shop_id, d, d))
+            out += self.client.fetch_all(name, self._ctx(shop_id, d, d, asins))
             d += timedelta(days=1)
         return out
 
-    def get_sales_daily(self, shop_id: str, start: date, end: date) -> list[SalesDaily]:
-        return self._fetch_range(E.SALES_DAILY, shop_id, start, end)
+    def get_sales_daily(
+        self, shop_id: str, start: date, end: date, asins: list[str] | None = None
+    ) -> list[SalesDaily]:
+        return self._fetch_range(E.SALES_DAILY, shop_id, start, end, asins)
 
     def list_ad_campaigns(self, shop_id: str) -> list[AdCampaign]:
         return self.client.fetch_all(E.AD_CAMPAIGNS, self._ctx(shop_id))
 
-    def get_ad_metrics(self, shop_id: str, level: AdLevel, start: date, end: date) -> list[AdMetricRow]:
-        return self._fetch_range(_AD_ENDPOINT[level], shop_id, start, end)
+    def get_ad_metrics(
+        self, shop_id: str, level: AdLevel, start: date, end: date, asins: list[str] | None = None
+    ) -> list[AdMetricRow]:
+        return self._fetch_range(_AD_ENDPOINT[level], shop_id, start, end, asins)

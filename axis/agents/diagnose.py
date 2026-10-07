@@ -13,6 +13,7 @@ from axis.agents.schemas import REVIEW_OUTPUT
 from axis.agents.tools import build_tools
 from axis.config import Settings
 from axis.db.schema import ReportRow
+from axis.watchlist import load_scope
 from axis.metrics.facts import product_facts
 from axis.metrics.rules import Flag
 
@@ -35,7 +36,8 @@ def run_diagnosis(
     sf: sessionmaker[Session], settings: Settings, shop_id: str, asin: str, report_date: date, llm: LLM | None
 ) -> ReportRow:
     with sf() as s:
-        facts = product_facts(s, shop_id, asin, report_date, settings.thresholds)
+        scope = load_scope(s)
+        facts = product_facts(s, shop_id, asin, report_date, settings.thresholds, scope)
 
     title = f"产品诊断 {shop_id} / {asin}（{facts['product']['title']}）{report_date.isoformat()}"
     if llm is None:
@@ -49,7 +51,7 @@ def run_diagnosis(
                 report_date=report_date.isoformat(), facts=json.dumps(facts, ensure_ascii=False, default=str)
             ),
             output_schema=REVIEW_OUTPUT,
-            tools=build_tools(sf, report_date, settings.thresholds),
+            tools=build_tools(sf, report_date, settings.thresholds, scope),
         )
         log.info("诊断完成：%s 轮，用量 %s", result.turns, result.usage)
         output, model = result.output, result.model

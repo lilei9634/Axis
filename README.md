@@ -1,6 +1,24 @@
 # Axis
 
-AI 驱动的跨境电商"一人公司"运营系统。当前是 MVP 阶段：**通过赛狐 ERP 获取 5 家亚马逊店铺的数据，做产品诊断和每日复盘，输出调整建议，推送到飞书。只读，不执行任何操作。**
+AI 驱动的跨境电商"一人公司"运营系统。当前是 MVP 阶段：**通过赛狐 ERP 获取你指定产品的数据，做产品诊断和每日复盘，输出调整建议，推送到飞书。只读，不执行任何操作。**
+
+## 关注列表：只分析你指定的产品
+
+系统不会拉取店铺里的全部产品，只处理关注列表里的产品：
+
+```bash
+uv run axis shops                                # 查看店铺 ID
+uv run axis track add B0XXXXXXXX                 # 关注这个 ASIN（所有店铺里的都算）
+uv run axis track add B0YYYYYYYY B0ZZZZZZZZ -s 店铺ID   # 只关注某家店里的这几个 ASIN
+uv run axis track list                           # 查看关注列表和同步状态
+uv run axis track remove B0XXXXXXXX              # 取消关注
+```
+
+- 同步时只拉取关注产品的产品信息、销量，以及**推广这些产品的广告活动**的数据（包括广告活动、投放词、搜索词）。没有关注产品的店铺整家跳过。
+- 复盘里的"店铺汇总"是关注产品的合计，不是整店数据。
+- 取消关注后，历史数据仍保留在数据库里，但不再出现在报告中；重新关注后就会恢复。
+- 如果一个广告活动同时推广了关注和未关注的产品，广告活动层面的数字（预算、总花费）会包含未关注产品的部分；产品层面的数字只算关注的产品。
+- 关注列表为空时，同步和复盘会提示你先添加产品。关注了但在 ERP 里找不到的 ASIN，同步结束时会提示。
 
 ## 架构
 
@@ -36,6 +54,7 @@ AI 驱动的跨境电商"一人公司"运营系统。当前是 MVP 阶段：**�
 
 ```bash
 uv sync
+uv run axis track add B0HATEST01 B0HBTEST01 B0HCTEST01      # 关注假数据里的产品
 uv run axis run-daily --adapter fake --no-llm --no-notify   # 不调用 AI，只用规则引擎
 cat reports/*_daily_review.md
 ```
@@ -45,7 +64,7 @@ cat reports/*_daily_review.md
 ```bash
 cp .env.example .env   # 填入 ANTHROPIC_API_KEY，按需修改其他配置
 uv run axis run-daily --adapter fake --no-notify
-uv run axis diagnose --shop S1 --asin B0S1CTEST0
+uv run axis diagnose --shop S1 --asin B0HCTEST01
 ```
 
 假数据里埋了几类问题（销量骤降、库存不足、只花钱不出单的搜索词、可收割的高转化搜索词、预算受限的广告活动），可以用来检验报告质量。
@@ -84,6 +103,8 @@ uv run axis har inspect sellfox.sanitized.har --out sellfox-apis.md
 ```bash
 uv sync --extra browser && uv run playwright install chromium
 uv run axis login            # 打开浏览器手动登录（含短信验证），登录态保存到 .axis/sellfox_auth.json
+uv run axis shops            # 查看店铺 ID
+uv run axis track add B0XXXXXXXX -s 店铺ID
 uv run axis sync --days 3    # 先同步 3 天，和赛狐页面核对几个数字
 uv run axis run-daily        # 完整流程：同步 → 复盘 → 推送飞书
 ```
@@ -100,7 +121,9 @@ uv run axis run-daily        # 完整流程：同步 → 复盘 → 推送飞书
 
 | 命令 | 作用 |
 |---|---|
-| `axis sync [--days N] [--adapter fake]` | 同步数据到本地数据库 |
+| `axis shops` | 列出 ERP 里的店铺和店铺 ID |
+| `axis track add/remove/list` | 管理关注列表（只有关注的产品会被同步和分析） |
+| `axis sync [--days N] [--adapter fake]` | 同步关注产品的数据到本地数据库 |
 | `axis review [--date YYYY-MM-DD] [--no-llm] [--no-notify]` | 基于已有数据生成每日复盘 |
 | `axis diagnose --shop S --asin A` | 单品诊断，输出优化方案 |
 | `axis run-daily` | 同步 + 复盘 + 推送 |
