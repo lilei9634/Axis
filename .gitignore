@@ -1,0 +1,10 @@
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+.env
+# 本地运行数据：数据库、登录凭证、报告、抓包文件都不进仓库
+data/
+.axis/
+reports/
+*.har

@@ -1,0 +1,34 @@
+[project]
+name = "axis"
+version = "0.1.0"
+description = "AI 驱动的跨境电商运营系统：基于赛狐 ERP 的产品诊断与每日复盘"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "anthropic>=1.11,<2",
+    "apscheduler>=3.10,<4",
+    "httpx>=0.27",
+    "pydantic>=2.7",
+    "pydantic-settings>=2.3",
+    "sqlalchemy>=2.0",
+    "typer>=0.12",
+]
+
+[project.optional-dependencies]
+browser = ["playwright>=1.45"]
+
+[project.scripts]
+axis = "axis.cli:main"
+
+[dependency-groups]
+dev = ["pytest>=8"]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.hatch.build.targets.wheel]
+packages = ["axis"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

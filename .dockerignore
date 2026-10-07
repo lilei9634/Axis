@@ -1,0 +1,8 @@
+.venv
+.git
+data
+reports
+.axis
+.env
+*.har
+tests
